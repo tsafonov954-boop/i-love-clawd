@@ -209,6 +209,106 @@ def fullscreen_app_active(own_hwnd):
         return False
 
 
+kernel32 = ctypes.windll.kernel32
+psapi = ctypes.windll.psapi
+kernel32.OpenProcess.argtypes = [wt.DWORD, wt.BOOL, wt.DWORD]
+kernel32.OpenProcess.restype = wt.HANDLE
+kernel32.CloseHandle.argtypes = [wt.HANDLE]
+kernel32.QueryFullProcessImageNameW.argtypes = [wt.HANDLE, wt.DWORD, wt.LPWSTR, ctypes.POINTER(wt.DWORD)]
+psapi.EnumProcessModulesEx.argtypes = [wt.HANDLE, ctypes.POINTER(wt.HMODULE), wt.DWORD, ctypes.POINTER(wt.DWORD), wt.DWORD]
+psapi.GetModuleBaseNameW.argtypes = [wt.HANDLE, wt.HMODULE, wt.LPWSTR, wt.DWORD]
+user32.GetWindowThreadProcessId.argtypes = [wt.HWND, ctypes.POINTER(wt.DWORD)]
+user32.GetWindowTextW.argtypes = [wt.HWND, wt.LPWSTR, ctypes.c_int]
+
+# папки, где живут игры; программы, которые игрой не считаются никогда
+LAUNCH_DIRS = ("\\steamapps\\common\\", "\\epic games\\", "\\riot games\\", "\\gog galaxy\\games\\",
+               "\\ubisoft game launcher\\games\\", "\\xboxgames\\", "\\.minecraft\\", "\\rockstar games\\",
+               "\\ea games\\", "\\battlestate games\\", "\\games\\")
+NOT_GAMES = {"chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "opera.exe", "code.exe", "claude.exe", "explorer.exe",
+             "devenv.exe", "unity.exe", "unityhub.exe", "blender.exe", "discord.exe", "slack.exe", "spotify.exe",
+             "teams.exe", "ms-teams.exe", "notepad.exe", "powershell.exe", "windowsterminal.exe", "cmd.exe",
+             "python.exe", "pythonw.exe", "obs64.exe", "vlc.exe", "steam.exe", "epicgameslauncher.exe",
+             "battle.net.exe", "telegram.exe", "whatsapp.exe", "winword.exe", "excel.exe", "powerpnt.exe"}
+GFX_DLLS = ("d3d11.dll", "d3d12.dll", "d3d9.dll", "vulkan-1.dll", "unityplayer.dll")
+
+
+def _proc_path(pid):
+    h = kernel32.OpenProcess(0x1000, False, pid)           # PROCESS_QUERY_LIMITED_INFORMATION
+    if not h:
+        return ""
+    try:
+        buf = ctypes.create_unicode_buffer(520)
+        size = wt.DWORD(520)
+        if kernel32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size)):
+            return buf.value
+    finally:
+        kernel32.CloseHandle(h)
+    return ""
+
+
+def _has_gfx_modules(pid):
+    h = kernel32.OpenProcess(0x0410, False, pid)           # QUERY_INFORMATION | VM_READ
+    if not h:
+        return False
+    try:
+        arr = (wt.HMODULE * 1024)()
+        need = wt.DWORD(0)
+        if not psapi.EnumProcessModulesEx(h, arr, ctypes.sizeof(arr), ctypes.byref(need), 3):
+            return False
+        name = ctypes.create_unicode_buffer(260)
+        for i in range(min(1024, need.value // ctypes.sizeof(wt.HMODULE))):
+            if psapi.GetModuleBaseNameW(h, arr[i], name, 260) and name.value.lower() in GFX_DLLS:
+                return True
+    finally:
+        kernel32.CloseHandle(h)
+    return False
+
+
+def windowed_game_active(own_hwnd, cache, extra=()):
+    """Игра в окне / безрамочная: передний план - не обычная программа, а процесс из папки игр,
+    Minecraft по заголовку, либо крупное окно с графическим API (D3D/Vulkan). Результат кэшируется на окно."""
+    try:
+        h = user32.GetForegroundWindow()
+        if not h or h == own_hwnd:
+            return False
+        hit = cache.get(h)
+        if hit and time.time() - hit[0] < 8:
+            return hit[1]
+        res = False
+        buf = ctypes.create_unicode_buffer(80)
+        user32.GetClassNameW(h, buf, 80)
+        if buf.value not in SKIP_CLASSES:
+            pid = wt.DWORD(0)
+            user32.GetWindowThreadProcessId(h, ctypes.byref(pid))
+            path = _proc_path(pid.value)
+            exe = os.path.basename(path).lower()
+            tb = ctypes.create_unicode_buffer(200)
+            user32.GetWindowTextW(h, tb, 200)
+            title = tb.value.lower()
+            if exe and exe in extra:                              # твой список из config.json (game_exes)
+                res = True
+            elif exe and exe not in NOT_GAMES and not any(x in exe for x in ("launcher", "helper", "crash", "setup", "updater")):
+                lp = path.lower()
+                if any(d in lp for d in LAUNCH_DIRS) or "minecraft" in title:
+                    res = True
+                else:
+                    r = wt.RECT()
+                    user32.GetWindowRect(h, ctypes.byref(r))
+                    mi = MONITORINFO()
+                    mi.cbSize = ctypes.sizeof(mi)
+                    user32.GetMonitorInfoW(user32.MonitorFromWindow(h, 2), ctypes.byref(mi))
+                    m = mi.rcMonitor
+                    area = max(1, (m.right - m.left) * (m.bottom - m.top))
+                    frac = max(0, r.right - r.left) * max(0, r.bottom - r.top) / area
+                    res = frac >= 0.7 and _has_gfx_modules(pid.value)
+        cache[h] = (time.time(), res)
+        if len(cache) > 40:
+            cache.clear()
+        return res
+    except Exception:
+        return False
+
+
 def foreign_windows(own_hwnd):
     """Видимые окна верхнего уровня (кроме нашего и системных): (l, t, r, b, maximized)."""
     out = []
@@ -399,6 +499,9 @@ class Clawd(QWidget):
         self.game_target, self.game_arrived = (0.0, 0.0), False
         self.keys_down, self.key_events, self.intensity = set(), [], 0.0
         self.react, self.next_react = None, 0.0
+        self.force_game, self._game_cache = False, {}
+        self.game_exes = set()
+        self._g_first, self._g_last, self._g_prev, self._kmove, self._hint = None, -99.0, False, False, False
         self.scanner = DeviceScanner()
         self.still_since, self.prev_cx, self.items_alpha = 0.0, 0.0, 0.0
         self.hover, self.gadget_rects = None, []
@@ -416,6 +519,7 @@ class Clawd(QWidget):
             self.sound = bool(cfg.get("sound", True))
             self.show_gadgets = bool(cfg.get("gadgets", True))
             self.game_pos = cfg.get("game_pos")
+            self.game_exes = {str(x).lower() for x in cfg.get("game_exes", [])}
         if cfg and "cx" in cfg:
             for s in QGuiApplication.screens():
                 g = s.availableGeometry()
@@ -459,7 +563,8 @@ class Clawd(QWidget):
     def save_config(self):
         try:
             CONFIG_FILE.write_text(json.dumps({"cx": int(self.cx), "sound": self.sound, "gadgets": self.show_gadgets,
-                                           "game_pos": self.game_pos}), encoding="utf-8")
+                                           "game_pos": self.game_pos,
+                                           "game_exes": sorted(self.game_exes)}), encoding="utf-8")
         except OSError:
             pass
 
@@ -754,7 +859,7 @@ class Clawd(QWidget):
         self.block_acc += dt
         if self.block_acc >= 0.4:
             self.block_acc = 0
-            gaming = fullscreen_app_active(self.hwnd)
+            gaming = self.detect_game()
             if gaming and not getattr(self, "in_game", False):
                 self.in_game = True                     # игра: стоит на экране и играет вместе с тобой
                 sg = self.cur_screen().geometry()
@@ -767,7 +872,11 @@ class Clawd(QWidget):
                 self.game_arrived = False
                 self.next_react = self.t + random.uniform(4, 8)
                 self.react = None
-                self.say("Играем!", 2.0)
+                if self._hint:
+                    self.say("Играем!", 2.0)
+                else:
+                    self._hint = True
+                    self.say("Играем! Ctrl+Alt+стрелки двигают меня", 4.5)
             elif not gaming and getattr(self, "in_game", False):
                 self.in_game = False
                 self.air = True
@@ -780,6 +889,7 @@ class Clawd(QWidget):
             self.top_acc = 0
             keep_on_top(self.hwnd)
 
+        self.poll_hotkeys(dt)
         cur = QCursor.pos()
         inst = math.hypot(cur.x() - self.cursor_prev.x(), cur.y() - self.cursor_prev.y()) / max(dt, 1e-3)
         self.cspeed = self.cspeed * 0.8 + inst * 0.2
@@ -951,6 +1061,64 @@ class Clawd(QWidget):
             tx = sg.left() + show - half
         ty = sg.top() + sg.height() * 0.6 - (H - MARGIN - SPR_H * P / 2)
         return tx, ty
+
+    def detect_game(self):
+        """Игра сейчас на переднем плане? С задержкой на вход и выход, чтобы Alt-Tab не дёргал маскота."""
+        raw = self.force_game or fullscreen_app_active(self.hwnd) or windowed_game_active(self.hwnd, self._game_cache, self.game_exes)
+        now = self.t
+        if raw:
+            if self._g_first is None:
+                self._g_first = now
+            self._g_last = now
+        else:
+            self._g_first = None
+        if not getattr(self, "in_game", False):
+            return self.force_game or (self._g_first is not None and now - self._g_first >= 0.8)
+        return raw or (now - self._g_last < 2.5)
+
+    def set_force_game(self, on):
+        self.force_game = bool(on)
+        self.say("Режим игры включён" if on else "Режим игры выключен", 2.0)
+
+    def save_game_pos(self):
+        sg = self.cur_screen().geometry()
+        gyy = sg.bottom() + 1 - H + MARGIN
+        self.game_pos = [round(self.cx - sg.left()), round(gyy - self.y)]
+        self.save_config()
+
+    def poll_hotkeys(self, dt):
+        """Ctrl+Alt+G - режим игры вручную; Ctrl+Alt+стрелки - двигать маскота без мыши (курсор в игре захвачен)."""
+        try:
+            gs = user32.GetAsyncKeyState
+            combo = bool(gs(0x11) & 0x8000) and bool(gs(0x12) & 0x8000)
+            g = combo and bool(gs(0x47) & 0x8000)
+            if g and not self._g_prev:
+                self.set_force_game(not self.force_game)
+                self.menu_force_sync()
+            self._g_prev = g
+            dx = dy = 0
+            if combo and getattr(self, "in_game", False) and self.game_arrived and not self.dragging:
+                dx = (1 if gs(0x27) & 0x8000 else 0) - (1 if gs(0x25) & 0x8000 else 0)
+                dy = (1 if gs(0x28) & 0x8000 else 0) - (1 if gs(0x26) & 0x8000 else 0)
+            if dx or dy:
+                self.cx += dx * 520 * dt
+                self.y += dy * 520 * dt
+                self.game_target = (self.cx, self.y)
+                self._kmove = True
+                if dx:
+                    self.dir = dx
+            elif self._kmove:
+                self._kmove = False
+                self.save_game_pos()
+        except Exception:
+            pass
+
+    def menu_force_sync(self):
+        act = getattr(self, "force_action", None)
+        if act is not None:
+            act.blockSignals(True)
+            act.setChecked(self.force_game)
+            act.blockSignals(False)
 
     def game_step(self, dt, cur):
         """Считает, как активно ты играешь, и иногда реагирует на происходящее."""
@@ -1974,6 +2142,10 @@ class Clawd(QWidget):
         snd.setCheckable(True)
         snd.setChecked(self.sound)
         snd.toggled.connect(self.set_sound)
+        fg = m.addAction("Режим игры вручную (Ctrl+Alt+G)")
+        fg.setCheckable(True)
+        fg.setChecked(self.force_game)
+        fg.toggled.connect(self.set_force_game)
         gd = m.addAction("Вещи вокруг (гаджеты)")
         gd.setCheckable(True)
         gd.setChecked(self.show_gadgets)
@@ -2015,6 +2187,11 @@ def main():
     snd.setCheckable(True)
     snd.setChecked(pet.sound)
     snd.toggled.connect(pet.set_sound)
+    fg = menu.addAction("Режим игры вручную (Ctrl+Alt+G)")
+    fg.setCheckable(True)
+    fg.setChecked(pet.force_game)
+    fg.toggled.connect(pet.set_force_game)
+    pet.force_action = fg
     gd = menu.addAction("Вещи вокруг (гаджеты)")
     gd.setCheckable(True)
     gd.setChecked(pet.show_gadgets)
