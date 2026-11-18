@@ -1,0 +1,8 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "python \"C:/path/to/clawd-pet/hook.py\" working" }] }],
+    "PostToolUse":      [{ "hooks": [{ "type": "command", "command": "python \"C:/path/to/clawd-pet/hook.py\" resume" }] }],
+    "Stop":             [{ "hooks": [{ "type": "command", "command": "python \"C:/path/to/clawd-pet/hook.py\" done" }] }],
+    "Notification":     [{ "hooks": [{ "type": "command", "command": "python \"C:/path/to/clawd-pet/hook.py\" attention" }] }]
+  }
+}

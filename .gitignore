@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+# runtime files
+state.json
+state.tmp
+status.json
+status.tmp
+config.json
+*.log
+err*.txt
+out.txt
+# local leftovers
+old/
