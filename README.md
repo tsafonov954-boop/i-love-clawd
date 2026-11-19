@@ -17,6 +17,13 @@ He is also just fun to have around: grab him, throw him, hang him by a claw, giv
 He plays along when you launch a game (and stays out of your way elsewhere), and can show the charge of
 your gamepad, laptop or headset when you hover the little gadgets next to him.
 
+> [!WARNING]
+> **Clawd can't be seen over exclusive-fullscreen games.** Windows lets such a game draw straight to the screen, so no
+> other window (this one, Discord, any overlay) can appear on top of it. Clawd still detects the game, but you won't see him.
+> Run the game in **windowed** or **borderless / windowed-fullscreen** mode (in Minecraft: not F11 fullscreen, or use a
+> "Borderless Fullscreen" mod). Taking a screenshot may show him anyway, because Windows composes all windows for it.
+> Also: Windows may show a SmartScreen warning for the unsigned `Clawd.exe` — "More info" → "Run anyway".
+
 ## Install
 
 1. Download **`Clawd.exe`** from the [latest release](../../releases/latest) and run it. No installer, no Python needed.
@@ -37,7 +44,7 @@ Languages: English, Русский, Українська, Deutsch, Español, Fra
 When a game is in front, Clawd walks to a spot you choose (drag him, he remembers it) and plays along with a
 gamepad, reacting to how busy your hands are. Detected: games in Steam/Epic/Riot/GOG/Xbox folders, Minecraft,
 and any window using Direct3D/Vulkan/OpenGL that covers the screen. Add your own exe names to `game_exes`
-in `%APPDATA%\Clawd\config.json`. *Limitation:* Windows cannot draw over true exclusive-fullscreen games — use borderless/windowed.
+in `%APPDATA%\Clawd\config.json`. See the warning above about exclusive fullscreen.
 
 ## Battery readout
 
