@@ -17,12 +17,12 @@ He is also just fun to have around: grab him, throw him, hang him by a claw, giv
 He plays along when you launch a game (and stays out of your way elsewhere), and can show the charge of
 your gamepad, laptop or headset when you hover the little gadgets next to him.
 
-> [!WARNING]
-> **Clawd can't be seen over exclusive-fullscreen games.** Windows lets such a game draw straight to the screen, so no
-> other window (this one, Discord, any overlay) can appear on top of it. Clawd still detects the game, but you won't see him.
-> Run the game in **windowed** or **borderless / windowed-fullscreen** mode (in Minecraft: not F11 fullscreen, or use a
-> "Borderless Fullscreen" mod). Taking a screenshot may show him anyway, because Windows composes all windows for it.
-> Also: Windows may show a SmartScreen warning for the unsigned `Clawd.exe` — "More info" → "Run anyway".
+> [!NOTE]
+> **Fullscreen games:** Clawd is a normal always-on-top window. In some games running in *exclusive* fullscreen,
+> Windows lets the game draw straight to the screen and no window can appear above it — Clawd is then detected
+> but not visible. If that happens, switch the game to **windowed / borderless (windowed-fullscreen)** mode
+> (Minecraft: not F11 fullscreen, or a "Borderless Fullscreen" mod). It depends on the game and graphics drivers; please open an issue with the game name.
+> Windows may also show a SmartScreen warning for the unsigned `Clawd.exe` — "More info" → "Run anyway".
 
 ## Install
 
