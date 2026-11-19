@@ -1,4 +1,4 @@
-<p align="center"><img src="assets/clawd.png" width="128" alt="Clawd"></p>
+<p align="center"><img src="assets/demo.gif" width="260" alt="Clawd: working, done, waiting"></p>
 
 # I LOVE CLAWD
 
