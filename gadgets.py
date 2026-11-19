@@ -87,10 +87,8 @@ ICONS = {
 }
 
 # мебель: что рисовать всегда, и как это назвать при наведении
-DECOR = [("mug", "Кофе. Давно остыл"), ("plant", "Фикус. Живой, наверное"),
-         ("books", "Документация, которую никто не читал"), ("mouse", "Мышка")]
-NAMES = {"gamepad": "Геймпад", "phone": "Телефон", "earbuds": "Наушники-вкладыши", "laptop": "Ноутбук",
-         "headset": "Наушники HyperX"}
+DECOR = [("mug", "d_mug"), ("plant", "d_plant"), ("books", "d_books"), ("mouse", "d_mouse")]   # (icon, translation key)
+NAMES = {"gamepad": "n_gamepad", "phone": "n_phone", "earbuds": "n_earbuds", "laptop": "n_laptop", "headset": "n_headset"}   # translation keys
 
 
 def icon_size(key, scale=3):
@@ -149,11 +147,11 @@ def xinput_gamepads():
             note, pct = "", None
             if dll.XInputGetBatteryInformation(i, 0, ctypes.byref(b)) == 0:
                 if b.type == 1:
-                    note = "по проводу"
+                    note = "wired"
                 else:
-                    note, pct = {0: ("почти пуст", 5), 1: ("низкий заряд", 20), 2: ("средний заряд", 55),
-                                 3: ("заряд полный", 100)}.get(b.level, ("", None))
-            out.append(dict(key="gamepad", label="Геймпад", pct=None, approx=pct, note=note))
+                    note, pct = {0: ("lvl0", 5), 1: ("lvl1", 20), 2: ("lvl2", 55),
+                                 3: ("lvl3", 100)}.get(b.level, ("", None))
+            out.append(dict(key="gamepad", label="n_gamepad", pct=None, approx=pct, note=note))
         except Exception:
             pass
     return out
@@ -166,8 +164,8 @@ def laptop_battery():
     s = SPS()
     try:
         if ctypes.windll.kernel32.GetSystemPowerStatus(ctypes.byref(s)) and s.flag != 128 and s.pct <= 100:
-            return [dict(key="laptop", label="Ноутбук", pct=int(s.pct),
-                         note="от сети" if s.ac == 1 else "")]
+            return [dict(key="laptop", label="n_laptop", pct=int(s.pct),
+                         note="ac" if s.ac == 1 else "")]
     except Exception:
         pass
     return []
@@ -210,7 +208,7 @@ def bluetooth_devices():
             continue
         pct = d.get("battery")
         out.append(dict(key=key, label=NAMES[key], pct=int(pct) if isinstance(pct, (int, float)) else None,
-                        approx=None, note="" if isinstance(pct, (int, float)) else "заряд недоступен"))
+                        approx=None, note="" if isinstance(pct, (int, float)) else "unavail"))
     return out
 
 

@@ -1,14 +1,18 @@
-"""Clawd - пиксельный маскот, который живёт поверх всех окон и реагирует на Claude Code.
+"""Clawd - a pixel-art mascot that lives on top of your windows and reacts to Claude Code.
 
-Связь с Claude Code: хуки пишут состояние в state.json (рядом со скриптом),
-маскот опрашивает файл 5 раз в секунду. См. hook.py и README.md.
+Claude Code hooks write the current state to state.json (in %APPDATA%/Clawd); the pet polls it
+five times a second. See paths.py (hooks/autostart), i18n.py (translations) and README.md.
 """
+import sys
+if "--hook" in sys.argv:                      # fast path used by Claude Code hooks: no Qt, no window
+    import paths as _paths
+    _paths.hook_cli(sys.argv[sys.argv.index("--hook") + 1] if len(sys.argv) > sys.argv.index("--hook") + 1 else "idle")
+    sys.exit(0)
 import ctypes
 import json
 import math
 import os
 import random
-import sys
 import tempfile
 import threading
 import time
@@ -19,16 +23,16 @@ except Exception:
     _hid = None
 from pathlib import Path
 
+import i18n
+import paths
+from i18n import T
 from gadgets import DECOR, DeviceScanner, draw_icon, icon_size
 from PySide6.QtCore import QLockFile, QPoint, QPointF, QRectF, Qt, QTimer
 from PySide6.QtGui import (QColor, QCursor, QFont, QFontMetrics, QGuiApplication,
                            QIcon, QPainter, QPainterPath, QPen, QPixmap, QPolygonF)
-from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon, QWidget
+from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon, QWidget
 
-HOME = Path(__file__).resolve().parent
-STATE_FILE = HOME / "state.json"      # сюда пишут хуки
-CONFIG_FILE = HOME / "config.json"    # позиция между запусками
-STATUS_FILE = HOME / "status.json"    # что сейчас делает маскот (для проверки)
+STATE_FILE, CONFIG_FILE, STATUS_FILE = paths.STATE_FILE, paths.CONFIG_FILE, paths.STATUS_FILE
 
 P = 4                  # размер "пикселя" спрайта на экране
 W, H = 380, 260        # размер окна
@@ -49,9 +53,6 @@ CHIP = QColor(104, 58, 32)
 CONFETTI = [QColor(255, 90, 90), QColor(255, 200, 60), QColor(90, 200, 120),
             QColor(90, 160, 255), QColor(200, 110, 255), QColor(255, 140, 200)]
 
-POKE_LINES = ["Привет!", "Эй, щекотно!", "Клац-клац!", "Хочу печеньку!", "Бип-буп!",
-              "Я тут живу", "Пиксели не кусаются", "Давай кодить!", "Ой!"]
-WORK_LINES = ["Думаю", "Пишу код", "Ищу в файлах"]
 
 
 def R(p, x, y, w, h, c):
@@ -183,28 +184,11 @@ WATCH_KEYS = (0x01, 0x02, 0x57, 0x41, 0x53, 0x44, 0x20, 0x10, 0x11, 0x45, 0x51, 
               0x25, 0x26, 0x27, 0x28, 0x31, 0x32, 0x33, 0x34, 0x35)
 
 
-def fullscreen_app_active(own_hwnd):
-    """True, если на переднем плане игра / полноэкранное приложение (тогда маскот прячется)."""
+def d3d_fullscreen_state():
+    """Windows сама сообщает, что идёт полноэкранное Direct3D-приложение (игра) - состояние 3."""
     try:
-        # 2 = занят/полный экран, 3 = полноэкранный Direct3D (игра), 4 = режим презентации
         st = ctypes.c_int(0)
-        if ctypes.windll.shell32.SHQueryUserNotificationState(ctypes.byref(st)) == 0 and st.value in (2, 3, 4):
-            return True
-        h = user32.GetForegroundWindow()
-        if not h or h == own_hwnd:
-            return False
-        buf = ctypes.create_unicode_buffer(80)
-        user32.GetClassNameW(h, buf, 80)
-        if buf.value in SKIP_CLASSES:
-            return False
-        r = wt.RECT()
-        user32.GetWindowRect(h, ctypes.byref(r))
-        mi = MONITORINFO()
-        mi.cbSize = ctypes.sizeof(mi)
-        user32.GetMonitorInfoW(user32.MonitorFromWindow(h, 2), ctypes.byref(mi))
-        m = mi.rcMonitor
-        # окно закрывает монитор целиком, вместе с панелью задач (обычное развёрнутое окно её не закрывает)
-        return r.left <= m.left and r.top <= m.top and r.right >= m.right and r.bottom >= m.bottom
+        return ctypes.windll.shell32.SHQueryUserNotificationState(ctypes.byref(st)) == 0 and st.value == 3
     except Exception:
         return False
 
@@ -228,8 +212,13 @@ NOT_GAMES = {"chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "opera.exe"
              "devenv.exe", "unity.exe", "unityhub.exe", "blender.exe", "discord.exe", "slack.exe", "spotify.exe",
              "teams.exe", "ms-teams.exe", "notepad.exe", "powershell.exe", "windowsterminal.exe", "cmd.exe",
              "python.exe", "pythonw.exe", "obs64.exe", "vlc.exe", "steam.exe", "epicgameslauncher.exe",
-             "battle.net.exe", "telegram.exe", "whatsapp.exe", "winword.exe", "excel.exe", "powerpnt.exe"}
+             "battle.net.exe", "telegram.exe", "whatsapp.exe", "winword.exe", "excel.exe", "powerpnt.exe",
+             "snippingtool.exe", "screenclippinghost.exe", "shellexperiencehost.exe", "searchhost.exe",
+             "startmenuexperiencehost.exe", "lockapp.exe", "applicationframehost.exe", "textinputhost.exe",
+             "mstsc.exe", "teamviewer.exe", "anydesk.exe", "gamebar.exe", "xboxpcapp.exe", "taskmgr.exe",
+             "mpc-hc64.exe", "mpv.exe", "potplayermini64.exe", "photoshop.exe", "acrobat.exe"}
 GFX_DLLS = ("d3d11.dll", "d3d12.dll", "d3d9.dll", "vulkan-1.dll", "unityplayer.dll")
+GFX_DLLS_FULLSCREEN = GFX_DLLS + ("opengl32.dll", "lwjgl.dll", "lwjgl64.dll", "glfw.dll", "sdl2.dll")
 
 
 def _proc_path(pid):
@@ -246,7 +235,7 @@ def _proc_path(pid):
     return ""
 
 
-def _has_gfx_modules(pid):
+def _has_gfx_modules(pid, dlls=GFX_DLLS):
     h = kernel32.OpenProcess(0x0410, False, pid)           # QUERY_INFORMATION | VM_READ
     if not h:
         return False
@@ -257,7 +246,7 @@ def _has_gfx_modules(pid):
             return False
         name = ctypes.create_unicode_buffer(260)
         for i in range(min(1024, need.value // ctypes.sizeof(wt.HMODULE))):
-            if psapi.GetModuleBaseNameW(h, arr[i], name, 260) and name.value.lower() in GFX_DLLS:
+            if psapi.GetModuleBaseNameW(h, arr[i], name, 260) and name.value.lower() in dlls:
                 return True
     finally:
         kernel32.CloseHandle(h)
@@ -265,14 +254,15 @@ def _has_gfx_modules(pid):
 
 
 def windowed_game_active(own_hwnd, cache, extra=()):
-    """Игра в окне / безрамочная: передний план - не обычная программа, а процесс из папки игр,
-    Minecraft по заголовку, либо крупное окно с графическим API (D3D/Vulkan). Результат кэшируется на окно."""
+    """Игра на переднем плане? Любое полноэкранное окно игрой НЕ считается (скриншотилка, видео, презентация).
+    Нужен признак игры: процесс из твоего списка / из папки игр / Minecraft по заголовку, либо окно на весь монитор
+    (или крупное окно от 70%) процесса с графическим API (Direct3D, Vulkan, OpenGL). Кэш на окно: 3 секунды."""
     try:
         h = user32.GetForegroundWindow()
         if not h or h == own_hwnd:
             return False
         hit = cache.get(h)
-        if hit and time.time() - hit[0] < 8:
+        if hit and time.time() - hit[0] < 3:
             return hit[1]
         res = False
         buf = ctypes.create_unicode_buffer(80)
@@ -300,7 +290,11 @@ def windowed_game_active(own_hwnd, cache, extra=()):
                     m = mi.rcMonitor
                     area = max(1, (m.right - m.left) * (m.bottom - m.top))
                     frac = max(0, r.right - r.left) * max(0, r.bottom - r.top) / area
-                    res = frac >= 0.7 and _has_gfx_modules(pid.value)
+                    covers = r.left <= m.left and r.top <= m.top and r.right >= m.right and r.bottom >= m.bottom
+                    if covers:
+                        res = _has_gfx_modules(pid.value, GFX_DLLS_FULLSCREEN)
+                    elif frac >= 0.7:
+                        res = _has_gfx_modules(pid.value)
         cache[h] = (time.time(), res)
         if len(cache) > 40:
             cache.clear()
@@ -386,8 +380,6 @@ EMOTES = {
 EMOTES["cookie"] = (["..XXX..", ".XXXXX.", "XXXXXXX", "XXXXXXX", "XXXXXXX", ".XXXXX.", "..XXX.."], COOKIE)
 MOVERS = {"walk": (85, 9, 0.45), "flee": (300, 20, 0.07), "zoomies": (430, 24, 0.05), "sneak": (35, 6, 9.9)}
 
-THOUGHTS = ["Хм...", "Скучно...", "Интересно", "♪ ♪ ♪", "Где печеньки?", "Кто-нибудь кодит?",
-            "Пиксели — это красиво", "Ля-ля-ля", "Эй, ты тут?"]
 IDLE_PICKS = [("walk", 22), ("stand", 6), ("sit", 9), ("jump", 6), ("hungry", 6), ("sleep", 6), ("fall", 3),
               ("look", 9), ("stretch", 4), ("wiggle", 4), ("curious", 8), ("hop3", 4),
               ("juggle", 5), ("sneeze", 3), ("sing", 5), ("spin", 4), ("butterfly", 5), ("zoomies", 4),
@@ -494,7 +486,7 @@ class Clawd(QWidget):
         self.pose = base_pose(0)
         self.blockers = []
         self.sound = True
-        self.show_gadgets = True
+        self.show_gadgets = False
         self.game_pos = None                  # где он стоит в играх: (x от левого края экрана, высота подошв над низом)
         self.game_target, self.game_arrived = (0.0, 0.0), False
         self.keys_down, self.key_events, self.intensity = set(), [], 0.0
@@ -515,9 +507,12 @@ class Clawd(QWidget):
         self.cx = a.right() - 130.0
         self.y = float(a.bottom() + 1 - H + MARGIN)
         cfg = self.load_config()
+        self.first_run = cfg is None
+        self.lang_pref = (cfg or {}).get("lang")
+        i18n.set_lang(self.lang_pref or i18n.detect())
         if cfg:
             self.sound = bool(cfg.get("sound", True))
-            self.show_gadgets = bool(cfg.get("gadgets", True))
+            self.show_gadgets = bool(cfg.get("gadgets", False))
             self.game_pos = cfg.get("game_pos")
             self.game_exes = {str(x).lower() for x in cfg.get("game_exes", [])}
         if cfg and "cx" in cfg:
@@ -563,7 +558,7 @@ class Clawd(QWidget):
     def save_config(self):
         try:
             CONFIG_FILE.write_text(json.dumps({"cx": int(self.cx), "sound": self.sound, "gadgets": self.show_gadgets,
-                                           "game_pos": self.game_pos,
+                                           "game_pos": self.game_pos, "lang": self.lang_pref,
                                            "game_exes": sorted(self.game_exes)}), encoding="utf-8")
         except OSError:
             pass
@@ -579,17 +574,10 @@ class Clawd(QWidget):
             pass
 
     def notify(self, kind):
-        """Звук и уведомление Windows, чтобы заметить маскота, даже если он закрыт окном."""
+        """Короткий звук; сообщение показывает сам маскот (облачко), а не уведомление Windows."""
         if not self.sound:
             return
-        if kind == "done":
-            play(SND_DONE)
-            title, msg = "Clawd", "Claude закончил. Готово!"
-        else:
-            play(SND_ATTENTION)
-            title, msg = "Clawd", "Claude ждёт тебя"
-        if self.tray is not None:
-            self.tray.showMessage(title, msg, QSystemTrayIcon.NoIcon, 4000)
+        play(SND_DONE if kind == "done" else SND_ATTENTION)       # без тостов Windows: текст уже в облачке
 
     def _batt_loop(self):
         while True:
@@ -602,31 +590,25 @@ class Clawd(QWidget):
         if raw != self.batt:
             prev, self.batt = self.batt, raw
             if raw is not None and prev is None:
-                self.batt_show_until = self.t + 6.0
-                self.batt_next = self.t + 240
-                self.say("Наушники на связи!", 2.4)
+                self.batt_show_until = self.t + 4.0
             elif raw is None and prev is not None:
-                self.say("Наушники отключились", 2.4)
+                pass
             if self.tray is not None:
-                self.tray.setToolTip("Clawd" + (f" — наушники {raw}%" if raw is not None else ""))
+                self.tray.setToolTip(T("tip_hs", pct=raw) if raw is not None else "Clawd")
         if raw is None:
             return
-        if self.t >= self.batt_next and self.beh not in ("sleep",):
-            self.batt_show_until = self.t + 5.0
-            self.batt_next = self.t + (240 if raw > 20 else 120 if raw > 10 else 60)
         if raw <= 20 and self.t >= self.batt_warn:
             self.batt_warn = self.t + (300 if raw > 10 else 120)
             self.batt_show_until = self.t + 6.0
-            self.say(f"Наушники садятся: {raw}%", 3.2)
+            self.say(T("hs_low", pct=raw), 3.2)
             self.show_emote("sweat", 2.0)
-            if self.sound and self.tray is not None:
+            if self.sound:
                 play(SND_ATTENTION)
-                self.tray.showMessage("Clawd", f"Заряд наушников {raw}%. Пора на зарядку", QSystemTrayIcon.NoIcon, 4000)
 
     def show_battery(self):
         self.batt_show_until = self.t + 5.0
         if self.batt is None:
-            self.say("Наушники не на связи", 2.2)
+            self.say(T("hs_off"), 2.2)
 
     def set_gadgets(self, on):
         self.show_gadgets = bool(on)
@@ -669,15 +651,14 @@ class Clawd(QWidget):
             self.enter("work")
             self.next_say = self.t + random.uniform(1.0, 3.0)
         elif m == "done":
-            self.done_left = 5.0
-            self.mode_bubble = ("Готово!", self.t + 5.0)
-            self.confetti_left = 3.5
-            self.burst(70)
-            self.show_emote("spark", 1.2)
+            self.done_left = 2.8                          # без конфетти: попрыгал и бросил "!"
+            self.mode_bubble = (T("done"), self.t + 2.8)
+            self.show_emote("!", 2.8)
             self.notify("done")
             self.enter("dance")
         elif m == "attention":
-            self.mode_bubble = ("Жду тебя!", float("inf"))
+            self.mode_bubble = (T("wait"), float("inf"))
+            self.show_emote("q", 2.3)                     # вопрос - вопросительный знак
             self.notify("attention")
             self.enter("wave")
         else:
@@ -735,7 +716,7 @@ class Clawd(QWidget):
             self.launch(-min(1500.0, math.sqrt(2 * G * room)), random.choice((-1, 1)) * 60.0, delay=0.18)
         elif b == "dizzy":
             self.dur = 1.8
-            self.say("Ой-ой...", 1.6)
+            self.say(T("ouch"), 1.6)
         elif b == "flee":
             self.dur = 1.3
             self.show_emote("sweat", 1.3)
@@ -743,7 +724,7 @@ class Clawd(QWidget):
             self.dur = 6.0
         elif b == "hungry":
             self.dur = 1.9
-            self.say("Бр-р-р...", 1.7)
+            self.say(T("brr"), 1.7)
             self.show_emote("cookie", 1.9)
         elif b == "juggle":
             self.dur = 5.5
@@ -773,10 +754,10 @@ class Clawd(QWidget):
             self.dur = 6.0
         elif b == "hello":
             self.dur = 2.6
-            self.say("Привет!", 2.2)
+            self.say(T("hello"), 2.2)
         elif b == "bye":
             self.dur = 1.5
-            self.say("Пока!", 1.3)
+            self.say(T("bye"), 1.3)
         elif b in ("dance", "wave"):
             self.last_hop = self.t
         self.write_status()
@@ -873,10 +854,10 @@ class Clawd(QWidget):
                 self.next_react = self.t + random.uniform(4, 8)
                 self.react = None
                 if self._hint:
-                    self.say("Играем!", 2.0)
+                    self.say(T("playing"), 2.0)
                 else:
                     self._hint = True
-                    self.say("Играем! Ctrl+Alt+стрелки двигают меня", 4.5)
+                    self.say(T("playing_hint"), 4.5)
             elif not gaming and getattr(self, "in_game", False):
                 self.in_game = False
                 self.air = True
@@ -1014,8 +995,13 @@ class Clawd(QWidget):
         self.prev_cx = self.cx
         if moved:
             self.still_since = self.t
-        want = self.show_gadgets and (self.t - self.still_since) > 1.2 and not self.dragging
-        self.items_alpha = approach(self.items_alpha, 1.0 if want else 0.0, dt * 3.0)
+        # вещи видны, только когда он спокойно стоит; стоит ему пошевелиться - пропадают сразу, а не тают
+        calm = self.beh in ("stand", "sit", "sleep", "yawn", "look", "hello") and abs(self.rot) < 4
+        want = self.show_gadgets and (self.t - self.still_since) > 1.2 and not self.dragging and calm             and self.mode != "done" and not self.pending
+        if want:
+            self.items_alpha = approach(self.items_alpha, 1.0, dt * 3.0)
+        else:
+            self.items_alpha = 0.0
         self.hover = None
         if self.items_alpha > 0.6:
             lp = QPointF(cur.x() - self.pos().x(), cur.y() - self.pos().y())
@@ -1064,7 +1050,7 @@ class Clawd(QWidget):
 
     def detect_game(self):
         """Игра сейчас на переднем плане? С задержкой на вход и выход, чтобы Alt-Tab не дёргал маскота."""
-        raw = self.force_game or fullscreen_app_active(self.hwnd) or windowed_game_active(self.hwnd, self._game_cache, self.game_exes)
+        raw = self.force_game or windowed_game_active(self.hwnd, self._game_cache, self.game_exes) or self.d3d_game()
         now = self.t
         if raw:
             if self._g_first is None:
@@ -1076,9 +1062,19 @@ class Clawd(QWidget):
             return self.force_game or (self._g_first is not None and now - self._g_first >= 0.8)
         return raw or (now - self._g_last < 2.5)
 
+    def d3d_game(self):
+        """Состояние Windows "полноэкранный Direct3D", но не если сверху явно не игра."""
+        if not d3d_fullscreen_state():
+            return False
+        h = user32.GetForegroundWindow()
+        pid = wt.DWORD(0)
+        user32.GetWindowThreadProcessId(h, ctypes.byref(pid))
+        exe = os.path.basename(_proc_path(pid.value)).lower()
+        return exe not in NOT_GAMES
+
     def set_force_game(self, on):
         self.force_game = bool(on)
-        self.say("Режим игры включён" if on else "Режим игры выключен", 2.0)
+        self.say(T("game_on") if on else T("game_off"), 2.0)
 
     def save_game_pos(self):
         sg = self.cur_screen().geometry()
@@ -1140,23 +1136,23 @@ class Clawd(QWidget):
             self.react = None
         if not self.game_arrived or self.dragging or now < self.next_react:
             return
-        self.next_react = now + random.uniform(7, 15) - 4 * self.intensity
+        self.next_react = now + random.uniform(18, 35) - 8 * self.intensity
         pool = [("cheer", 3), ("gasp", 2), ("tense", 2), ("ouch", 1)]
         if self.intensity > 0.6:
             pool += [("tense", 3), ("gasp", 2)]
         name = random.choices([n for n, _ in pool], [w for _, w in pool])[0]
         self.react = (name, now + 1.2, now)
         if name == "cheer":
-            self.say(random.choice(("Ура!", "GG!", "Так держать!", "Круто!")), 1.6)
+            self.say(T("cheer"), 1.6)
             self.show_emote(random.choice(("heart", "spark")), 1.5)
         elif name == "gasp":
-            self.say(random.choice(("Ого!", "Видел?!", "Ничего себе!")), 1.5)
+            self.say(T("gasp"), 1.5)
             self.show_emote("!", 1.3)
         elif name == "tense":
-            self.say(random.choice(("Осторожно!", "Он сзади!", "Держись!")), 1.5)
+            self.say(T("tense"), 1.5)
             self.show_emote("sweat", 1.3)
         else:
-            self.say(random.choice(("Ай!", "Мимо...", "Не повезло")), 1.4)
+            self.say(T("hurt"), 1.4)
             self.show_emote("sweat", 1.3)
 
     def in_game_flag(self):
@@ -1219,12 +1215,14 @@ class Clawd(QWidget):
         b = self.beh
         t = self.t
         dx, dy = cur.x() - self.cx, cur.y() - (self.y + H - 55)
-        near = abs(dx) < 120 and abs(dy) < 100
+        near = abs(dx) < 70 and abs(dy) < 80                 # пугается, только если курсор прямо на нём
         if self.hover is not None or (self.items_alpha > 0.4 and 56 < abs(dx) < W / 2 and 1 < dy < 55):
             near = False                                # тянется к его вещам - не пугается
         calm = ("stand", "walk", "sit", "eat", "sleep", "jump", "look", "stretch", "yawn", "curious", "hop3", "juggle",
                 "sing", "butterfly", "sneak", "stargaze", "hungry", "hello", "spin", "workout")
-        if self.mode == "idle" and near and self.cspeed > 250 and not self.air and b in calm:
+        if (self.mode == "idle" and near and self.cspeed > 1200 and not self.air and b in calm
+                and t - getattr(self, "flee_t", -99) > 8 and not self.pressed):   # только резкий взмах, не чаще раза в 8 с
+            self.flee_t = t
             self.dir = -1 if dx > 0 else 1
             self.cookie = None
             self.enter("flee")
@@ -1241,7 +1239,7 @@ class Clawd(QWidget):
                 b = "evade"
             elif t - self.tight_t > 20:
                 self.tight_t = t
-                self.say("Тесно тут!", 2.0)
+                self.say(T("cramped"), 2.0)
         # приятно, когда рядом спокойный курсор
         if (self.mode == "idle" and self.hover is None and abs(dx) < 110 and abs(dy) < 110 and self.cspeed < 120
                 and b in ("stand", "sit", "look", "walk")):
@@ -1249,7 +1247,7 @@ class Clawd(QWidget):
             if self.hover_t > 2.2:
                 self.hover_t = -8.0
                 self.show_emote("heart", 2.0)
-                self.say("Ты тут?", 1.8)
+                self.say(T("you_there"), 1.8)
                 self.enter("wiggle")
                 b = "wiggle"
         elif self.hover_t < 0:
@@ -1257,8 +1255,8 @@ class Clawd(QWidget):
         else:
             self.hover_t = max(0.0, self.hover_t - dt)
         if self.mode == "idle" and t >= self.next_thought and b in ("stand", "sit", "walk", "look"):
-            self.say(random.choice(THOUGHTS), 2.5)
-            self.next_thought = t + random.uniform(25, 50)
+            self.say(T("thoughts"), 2.5)
+            self.next_thought = t + random.uniform(70, 140)
         if self.mode == "done":
             self.done_left -= dt
             if self.done_left <= 0:
@@ -1301,7 +1299,7 @@ class Clawd(QWidget):
             if self.bt >= 0.9 and not self.sneezed:
                 self.sneezed = True
                 self.sq, self.sqv = 0.35, 0.0
-                self.say("Апчхи!", 1.4)
+                self.say(T("achoo"), 1.4)
                 self.launch(-260, -self.dir * 140)
                 for _ in range(12):
                     life = random.uniform(0.3, 0.5)
@@ -1350,7 +1348,7 @@ class Clawd(QWidget):
         elif b == "work":
             self.phase += dt * 8
             if t >= self.next_say:
-                self.mode_bubble = (random.choice(WORK_LINES), t + 3.0)
+                self.mode_bubble = (T("work"), t + 3.0)
                 self.next_say = t + random.uniform(8, 14)
                 if random.random() < 0.35:
                     self.show_emote("spark", 1.2)
@@ -1362,9 +1360,11 @@ class Clawd(QWidget):
             if not self.air and t - self.last_hop > 0.5:
                 self.last_hop = t
                 self.launch(-470, delay=0.05)
-                self.show_emote(random.choice(("note", "note", "spark")), 0.9)
         elif b == "wave":
             self.phase += dt * 10
+            if t - self.last_q > 2.4:                     # пока ждёт - снова и снова "?"
+                self.last_q = t
+                self.show_emote("q", 2.3)
             if not self.air and self.bt > 1.2 and t - self.last_hop > 2.2:
                 self.last_hop = t
                 self.launch(-520, delay=0.1)
@@ -1394,10 +1394,10 @@ class Clawd(QWidget):
                 self.enter("zoomies")
             else:
                 if b == "workout":
-                    self.say("Уф!", 1.5)
+                    self.say(T("phew"), 1.5)
                     self.show_emote("sweat", 1.5)
                 elif b == "butterfly":
-                    self.say("Улетела...", 1.8)
+                    self.say(T("flew"), 1.8)
                 if b == "eat":
                     self.show_emote("heart", 1.6)
                 self.pick()
@@ -1698,7 +1698,7 @@ class Clawd(QWidget):
             rot = self.tumble
             if self.thrown:
                 d["eyes"] = "x" if abs(self.vx) > 900 else "wide"
-        d["phones"] = self.batt is not None
+        d["phones"] = self.batt is not None and self.t < self.batt_show_until
         d["rot"], d["bob"], d["sqx"] = rot, bob, sqx
         return d
 
@@ -1893,10 +1893,13 @@ class Clawd(QWidget):
                 p.fillRect(int(q["x"]), int(q["y"]), 3, 3, q["col"])
 
     def gadget_items(self):
-        devs = list(self.scanner.devices)
+        devs = [dict(d) for d in self.scanner.devices]
         if self.batt is not None:
-            devs.insert(0, dict(key="headset", label="Наушники HyperX", pct=self.batt, approx=None, note=""))
-        decor = [dict(key=k, label=tip, pct=None, approx=None, note="", decor=True) for k, tip in DECOR]
+            devs.insert(0, dict(key="headset", label="n_headset", pct=self.batt, approx=None, note=""))
+        decor = [dict(key=k, label=T(tip), pct=None, approx=None, note="", decor=True) for k, tip in DECOR]
+        for d in devs:
+            d["label"] = T(d["label"])
+            d["note"] = T(d["note"]) if d.get("note") else ""
         return devs + decor
 
     def paint_gadgets(self, p):
@@ -1906,7 +1909,7 @@ class Clawd(QWidget):
             return
         feet_y = H - MARGIN
         pref = -1 if self.cx > self.cur_screen().geometry().center().x() else 1
-        used = {1: SPR_W * P / 2 + 16, -1: SPR_W * P / 2 + 16}
+        used = {1: SPR_W * P / 2 + 34, -1: SPR_W * P / 2 + 34}      # с запасом: он не задевает вещи
         limit = W / 2 - 4
         side = pref
         p.save()
@@ -1941,7 +1944,7 @@ class Clawd(QWidget):
             if item["pct"] is not None:
                 text = f"{item['label']}: {item['pct']}%"
             else:
-                text = f"{item['label']}: {item['note'] or 'нет данных'}"
+                text = f"{item['label']}: {item['note'] or T('no_data')}"
         f = QFont("Segoe UI", 9)
         f.setBold(True)
         p.setFont(f)
@@ -1960,36 +1963,57 @@ class Clawd(QWidget):
             p.fillRect(int(bx + 9), int(by + bh - 7), max(2, int((bw - 18) * pct / 100)), 3, col)
 
     def paint_bubble(self, p):
-        text = None
+        """Облачко в стиле современных тултипов: тёмное стекло, мягкая тень, плавное появление и затухание."""
+        text, until = None, 0.0
         if self.temp_bubble and self.t < self.temp_bubble[1]:
-            text = self.temp_bubble[0]
+            text, until = self.temp_bubble[0], self.temp_bubble[1]
         elif self.mode_bubble and self.t < self.mode_bubble[1]:
-            text = self.mode_bubble[0]
+            text, until = self.mode_bubble[0], self.mode_bubble[1]
         if not text:
+            self._bub_text = None
             return
-        f = QFont("Segoe UI", 12)
-        f.setBold(True)
+        if text != getattr(self, "_bub_text", None):
+            self._bub_text, self._bub_t0 = text, self.t
+        age = self.t - self._bub_t0
+        pop = min(1.0, age / 0.16)
+        scale = 0.6 + 0.4 * (1 + 2.7 * (pop - 1) ** 3 + 1.7 * (pop - 1) ** 2)       # лёгкий "выскок" (easeOutBack)
+        alpha = min(1.0, age / 0.12) * (1.0 if until == float("inf") else max(0.0, min(1.0, (until - self.t) / 0.25)))
+
+        f = QFont("Segoe UI Semibold", 10)
+        f.setPixelSize(15)
         p.setFont(f)
         fm = QFontMetrics(f)
-        w, h = fm.horizontalAdvance(text) + 28, fm.height() + 14
-        bottom = H - MARGIN - SPR_H * P - 34
+        w, h = fm.horizontalAdvance(text) + 26, fm.height() + 12
+        bottom = H - MARGIN - SPR_H * P - 24
         x, y = W / 2 - w / 2, bottom - h
-        path = QPainterPath()
-        path.addRoundedRect(QRectF(x, y, w, h), 10, 10)
+        body = QPainterPath()
+        body.addRoundedRect(QRectF(x, y, w, h), 12, 12)
+        tail = QPainterPath()                                      # хвостик, чуть скруглённый
+        tail.moveTo(W / 2 - 7, bottom - 1)
+        tail.quadTo(W / 2 - 1, bottom - 1, W / 2, bottom + 8)
+        tail.quadTo(W / 2 + 1, bottom - 1, W / 2 + 7, bottom - 1)
+        tail.closeSubpath()
+        shape = body.united(tail)
+
+        p.save()
         p.setRenderHint(QPainter.Antialiasing, True)
-        pen = QPen(QColor(60, 40, 38), 2.5)
-        p.setPen(pen)
-        p.setBrush(QColor(255, 253, 248))
-        p.drawPath(path)
+        p.setRenderHint(QPainter.TextAntialiasing, True)
+        p.setOpacity(alpha)
+        p.translate(W / 2, bottom + 8)
+        p.scale(scale, scale)
+        p.translate(-W / 2, -(bottom + 8))
         p.setPen(Qt.NoPen)
-        p.drawPolygon(QPolygonF([QPointF(W / 2 - 7, bottom - 1), QPointF(W / 2 + 7, bottom - 1),
-                                 QPointF(W / 2, bottom + 11)]))
-        p.setPen(pen)
-        p.drawLine(QPointF(W / 2 - 7, bottom), QPointF(W / 2, bottom + 11))
-        p.drawLine(QPointF(W / 2 + 7, bottom), QPointF(W / 2, bottom + 11))
-        p.setPen(QColor(50, 34, 32))
+        for i, a_ in enumerate((18, 28, 40)):                      # мягкая тень слоями
+            sh = QPainterPath(shape)
+            sh.translate(0, 2 + i)
+            p.setBrush(QColor(0, 0, 0, a_))
+            p.drawPath(sh)
+        p.setBrush(QColor(32, 33, 41, 242))
+        p.setPen(QPen(QColor(255, 255, 255, 38), 1.0))
+        p.drawPath(shape)
+        p.setPen(QColor(244, 244, 248))
         p.drawText(QRectF(x, y, w, h), Qt.AlignCenter, text)
-        p.setRenderHint(QPainter.Antialiasing, False)
+        p.restore()
 
     # ------------------------------------------------ мышь
     def mousePressEvent(self, e):
@@ -2077,7 +2101,7 @@ class Clawd(QWidget):
                 self.y = max(sg.top() - 20.0, min(float(gyy), self.y))
                 self.game_target, self.game_arrived = (self.cx, self.y), True
                 self.game_pos = [round(self.cx - sg.left()), round(gyy - self.y)]
-                self.say("Тут постою", 1.6)
+                self.say(T("stay"), 1.6)
                 self.save_config()
                 return
             self.air = True
@@ -2118,45 +2142,88 @@ class Clawd(QWidget):
             self.enter("stand")
         if n >= 4:                                   # надоело
             self.annoy_until = t + 1.6
-            self.say("Хватит!", 1.6)
+            self.say(T("enough"), 1.6)
             self.show_emote("sweat", 1.6)
             self.click_times = []
         elif n == 3:
-            self.say("Ха-ха, щекотно!", 1.8)
+            self.say(T("tickle"), 1.8)
             self.show_emote("heart", 1.8)
             self.enter("wiggle")
         else:
             if not self.air:
                 self.launch(-820, delay=0.07)
             self.happy_until = t + 1.2
-            self.say(random.choice(POKE_LINES), 2.0)
+            self.say(T("poke"), 2.0)
             self.show_emote(random.choice(("heart", "spark", "heart")), 1.5)
 
     def contextMenuEvent(self, e):
-        m = QMenu()
-        bt = m.addAction(f"Наушники: {self.batt}%" if self.batt is not None else "Наушники: не на связи")
-        bt.triggered.connect(self.show_battery)
-        m.addAction("Дать печеньку").triggered.connect(self.give_cookie)
-        m.addAction("Спать").triggered.connect(lambda: self.enter("yawn") if self.mode == "idle" else None)
-        snd = m.addAction("Звук и уведомления")
-        snd.setCheckable(True)
-        snd.setChecked(self.sound)
-        snd.toggled.connect(self.set_sound)
-        fg = m.addAction("Режим игры вручную (Ctrl+Alt+G)")
-        fg.setCheckable(True)
-        fg.setChecked(self.force_game)
-        fg.toggled.connect(self.set_force_game)
-        gd = m.addAction("Вещи вокруг (гаджеты)")
-        gd.setCheckable(True)
-        gd.setChecked(self.show_gadgets)
-        gd.toggled.connect(self.set_gadgets)
-        m.addSeparator()
-        m.addAction("Выход").triggered.connect(QApplication.quit)
-        m.exec(e.globalPos())
+        build_menu(self).exec(e.globalPos())
+
+    def set_language(self, code):
+        self.lang_pref = code
+        i18n.set_lang(code)
+        self.save_config()
+        self.say(T("hello"), 1.6)
+
+    def toggle_hooks(self, on):
+        try:
+            paths.install_hooks() if on else paths.remove_hooks()
+            self.say(T("connected") if on else T("disconnected"), 3.0)
+        except Exception:
+            self.say("settings.json?", 3.0)
+
+    def toggle_autostart(self, on):
+        try:
+            paths.set_autostart(on)
+        except Exception:
+            pass
 
     def give_cookie(self):
         if self.mode == "idle":
             self.enter("eat")
+
+
+def build_menu(pet, quit_fn=None, m=None):
+    """One menu for both the right-click on the pet and the tray icon."""
+    m = m if m is not None else QMenu()
+    if pet.batt is not None:
+        m.addAction(T("m_hs", pct=pet.batt)).triggered.connect(pet.show_battery)
+    m.addAction(T("m_cookie")).triggered.connect(pet.give_cookie)
+    m.addAction(T("m_sleep")).triggered.connect(lambda: pet.enter("yawn") if pet.mode == "idle" else None)
+    m.addSeparator()
+    for text, on, fn in ((T("m_sound"), pet.sound, pet.set_sound), (T("m_game"), pet.force_game, pet.set_force_game),
+                         (T("m_gadgets"), pet.show_gadgets, pet.set_gadgets),
+                         (T("m_connect"), paths.hooks_installed(), pet.toggle_hooks),
+                         (T("m_autostart"), paths.autostart_enabled(), pet.toggle_autostart)):
+        a = m.addAction(text)
+        a.setCheckable(True)
+        a.setChecked(on)
+        a.toggled.connect(fn)
+        if fn == pet.set_force_game:
+            pet.force_action = a
+    lm = m.addMenu(T("m_lang"))
+    for code, name in i18n.LANG_NAMES.items():
+        a = lm.addAction(name)
+        a.setCheckable(True)
+        a.setChecked(code == i18n.get_lang())
+        a.triggered.connect(lambda _=False, c=code: pet.set_language(c))
+    m.addSeparator()
+    m.addAction(T("m_exit")).triggered.connect(quit_fn or QApplication.quit)
+    return m
+
+
+def first_run_dialog(pet):
+    """Ask once (never silently) whether to wire Clawd into Claude Code."""
+    if paths.hooks_installed():
+        return
+    mb = QMessageBox()
+    mb.setWindowTitle("Clawd")
+    mb.setText(T("ask_connect"))
+    mb.setIcon(QMessageBox.Question)
+    mb.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+    mb.setWindowFlag(Qt.WindowStaysOnTopHint, True)
+    if mb.exec() == QMessageBox.Yes:
+        pet.toggle_hooks(True)
 
 
 def tray_icon():
@@ -2181,26 +2248,14 @@ def main():
     tray = QSystemTrayIcon(tray_icon(), app)
     tray.setToolTip("Clawd")
     menu = QMenu()
-    menu.addAction("Показать заряд наушников").triggered.connect(pet.show_battery)
-    menu.addAction("Дать печеньку").triggered.connect(pet.give_cookie)
-    snd = menu.addAction("Звук и уведомления")
-    snd.setCheckable(True)
-    snd.setChecked(pet.sound)
-    snd.toggled.connect(pet.set_sound)
-    fg = menu.addAction("Режим игры вручную (Ctrl+Alt+G)")
-    fg.setCheckable(True)
-    fg.setChecked(pet.force_game)
-    fg.toggled.connect(pet.set_force_game)
-    pet.force_action = fg
-    gd = menu.addAction("Вещи вокруг (гаджеты)")
-    gd.setCheckable(True)
-    gd.setChecked(pet.show_gadgets)
-    gd.toggled.connect(pet.set_gadgets)
-    menu.addAction("Выход").triggered.connect(app.quit)
+    menu.aboutToShow.connect(lambda: (menu.clear(), build_menu(pet, app.quit, menu)))
     pet.tray = tray
     tray.setContextMenu(menu)
     tray.show()
     app.aboutToQuit.connect(pet.save_config)
+    if pet.first_run:
+        pet.save_config()
+        QTimer.singleShot(1500, lambda: first_run_dialog(pet))
     code = app.exec()
     lock.unlock()
     return code

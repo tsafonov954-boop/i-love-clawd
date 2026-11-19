@@ -1,84 +1,69 @@
-# Clawd Pet
+<p align="center"><img src="assets/clawd.png" width="128" alt="Clawd"></p>
 
-Маленький пиксельный краб-маскот для Windows, который живёт поверх всех окон и реагирует на
-[Claude Code](https://claude.com/claude-code). Python + PySide6.
+# I LOVE CLAWD
 
-*A tiny pixel-crab desktop mascot for Windows that lives on top of your windows and reacts to Claude Code hooks.*
+**A desktop pet for Claude Code.** 100% vibe-coded: every line was written by AI (Claude Code), the human only gave vibes and feedback.
 
-## Что умеет
+A tiny pixel-art crab that lives on top of your windows (Windows 10/11) and reacts to what
+[Claude Code](https://claude.com/claude-code) is doing — so you can look at something else while Claude works.
 
-- Прозрачное окно без рамки поверх всех окон, не крадёт фокус, клики проходят сквозь пустые пиксели.
-- Живёт на краю панели задач: ходит, сидит, спит, прыгает, ест печеньки, жонглирует, убегает от курсора и
-  от окон, которые его накрывают.
-- **Состояния Claude Code** (через хуки): думает/работает (печатает за клавиатурой), готово (танец, конфетти,
-  звук и уведомление Windows), ждёт тебя (машет рукой).
-- **Бросок с инерцией:** схвати и швырни: он кувыркается, отскакивает от стен и пола. Если взять за любую точку
-  (лапку, голову, ногу), он свесится на ней как маятник.
-- **Игры:** когда игра на переднем плане, он идёт на своё место (по умолчанию внизу справа), берёт геймпад,
-  смотрит в экран и играет вместе с тобой: чем активнее ты жмёшь кнопки и мышь, тем быстрее он «давит» на свои,
-  а иногда радуется, ахает или пугается. Место запоминается.
-  Считается только число нажатий нескольких игровых клавиш, ничего не записывается и не отправляется.
-- **Батарея наушников** HyperX Cloud III Wireless: на нём надеты наушники, рядом пиксельная батарейка с процентом,
-  предупреждение при низком заряде.
-- **Гаджеты вокруг:** когда он стоит на месте, рядом лежат подключённые устройства (геймпад, телефон, TWS,
-  ноутбук) и мебель (кружка, фикус, книги, мышка). Наведи курсор на устройство, чтобы увидеть заряд.
+| Claude is… | Clawd… |
+|---|---|
+| working | sits at a tiny computer and types |
+| done | hops and throws a **!** (plus a short sound) |
+| waiting for you | shows a **?** until you answer |
 
-## Установка
+He is also just fun to have around: grab him, throw him, hang him by a claw, give him a cookie.
+He plays along when you launch a game (and stays out of your way elsewhere), and can show the charge of
+your gamepad, laptop or headset when you hover the little gadgets next to him.
 
-```bash
+## Install
+
+1. Download **`Clawd.exe`** from the [latest release](../../releases/latest) and run it. No installer, no Python needed.
+2. On first launch Clawd asks whether to connect to Claude Code. Say **Yes** (it adds four small hooks to
+   `~/.claude/settings.json`; a backup is saved next to it). You can undo it any time from the tray menu.
+3. Optional: tray menu → **Run at startup**.
+
+Everything lives in the tray icon / right-click menu: cookie, sound, game mode, gadgets, startup, **language**.
+Languages: English, Русский, Українська, Deutsch, Español, Français, Português, 中文, 日本語 — picked automatically from Windows, switchable in the menu.
+
+## Controls
+
+- **Drag / throw** him with the mouse; grab any point and he dangles from it. Click to poke.
+- **Right-click** — the menu. **Ctrl+Alt+G** — game mode on/off. **Ctrl+Alt+arrows** — move him in a game (the mouse is captured there).
+
+## Game mode
+
+When a game is in front, Clawd walks to a spot you choose (drag him, he remembers it) and plays along with a
+gamepad, reacting to how busy your hands are. Detected: games in Steam/Epic/Riot/GOG/Xbox folders, Minecraft,
+and any window using Direct3D/Vulkan/OpenGL that covers the screen. Add your own exe names to `game_exes`
+in `%APPDATA%\Clawd\config.json`. *Limitation:* Windows cannot draw over true exclusive-fullscreen games — use borderless/windowed.
+
+## Battery readout
+
+Hover the gadgets (enable them in the menu). Charge is shown only for what is connected: Xbox-style gamepads (XInput),
+laptop battery, Bluetooth devices that report it, and HyperX Cloud III Wireless headsets (via `hidapi`).
+
+## Run from source / build
+
+```powershell
 pip install -r requirements.txt
-python clawd.py          # или run.bat (без консоли)
-install-autostart.bat    # автозапуск вместе с Windows
+python clawd.py            # or run.bat
+.\build.bat                # -> dist\Clawd.exe (needs pyinstaller + pillow)
 ```
 
-## Хуки Claude Code
+Layout: `clawd.py` (the pet), `i18n.py` (translations — add a language by copying the `en` block),
+`paths.py` (data folder, hooks installer, autostart), `gadgets.py` (device icons and polling), `hook.py` (script form of the hook).
+Runtime data (state/config) is in `%APPDATA%\Clawd`. Hook CLI: `Clawd.exe --hook working|done|attention|idle`.
 
-Скопируй блок из [`claude-settings.example.json`](claude-settings.example.json) в `~/.claude/settings.json`
-и поправь путь к `hook.py`. Хук просто пишет состояние в `state.json`, а маскот следит за этим файлом.
+## Contributing
 
-| Хук | Команда | Что делает маскот |
-| --- | --- | --- |
-| UserPromptSubmit | `hook.py working` | работает |
-| PostToolUse | `hook.py resume` | возвращается к работе после подтверждения |
-| Stop | `hook.py done` | танцует, звук и уведомление |
-| Notification | `hook.py attention` | машет рукой |
+Issues and PRs welcome — especially translations, new idle animations, and game detection fixes.
 
-## Игры: как он понимает, что ты играешь
+## Vibe-coded disclaimer
 
-Игровой режим включается, если на переднем плане:
+This whole project was vibe-coded with Claude Code. It works on my machine and probably on yours, but expect rough edges — PRs welcome.
 
-1. окно на весь монитор (полноэкранная или безрамочная игра, презентация);
-2. процесс из папки игр (`steamapps\common`, Epic Games, Riot, GOG, Xbox, `.minecraft` и т. п.) или окно с
-   «Minecraft» в заголовке;
-3. крупное окно (от 70% монитора) процесса с графикой Direct3D/Vulkan, кроме браузеров, редакторов и т. п.;
-4. программа из твоего списка: добавь имя exe в `config.json` -> `"game_exes": ["mygame.exe"]`;
-5. ты включил режим вручную: **Ctrl+Alt+G** (повторно выключает) или пункт меню.
+## License
 
-Вход и выход с небольшой задержкой, поэтому Alt-Tab его не дёргает.
-
-**Двигать без мыши** (в играх курсор захвачен): **Ctrl+Alt+стрелки**. Мышью его тоже можно тащить, когда курсор свободен.
-
-**Не работает** в «настоящем» эксклюзивном полноэкранном режиме: Windows рисует игру напрямую и окна поверх не показывает.
-Выход: режим «в окне без рамки» в настройках игры.
-
-## Откуда берутся заряды
-
-Windows показывает заряд далеко не всех устройств, поэтому:
-
-| Устройство | Источник | Замечания |
-| --- | --- | --- |
-| HyperX Cloud III Wireless | HID-запрос к USB-приёмнику | только чтение; нужен `hidapi` |
-| Геймпад Xbox | XInput (+ точный процент из свойств Bluetooth) | XInput отдаёт 4 ступени |
-| Телефон, TWS-наушники | свойства Bluetooth-устройства | часто заряд недоступен: тогда подсказка так и говорит |
-| Ноутбук | `GetSystemPowerStatus` | на ПК без батареи не показывается |
-
-Показываются только подключённые сейчас устройства. Мебель (кружка, фикус, книги, мышка) нарисована просто так.
-
-## Управление
-
-Правый клик по маскоту или иконке в трее: печенька, спать, звук и уведомления, вещи вокруг, выход.
-Настройки (позиция, звук, гаджеты) лежат в `config.json` и в репозиторий не попадают.
-
-## Лицензия
-
-Не выбрана. Добавь файл `LICENSE` перед публикацией.
+[MIT](LICENSE)
